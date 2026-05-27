@@ -15,12 +15,56 @@ const PILLAR_COLORS = {
 };
 
 const REG_TEXT = {
-  es: { welcome:'Bienvenido a', subtitle:'Ingresa tus datos para comenzar', nombre:'Nombre completo', correo:'Correo corporativo', bp:'BP (código numérico)', nombrePh:'Ej: María González', correoPh:'Ej: maria.gonzalez@latam.com', bpPh:'Ej: 1234567', btnStart:'Comenzar entrenamiento ✦', errNombre:'Ingresa tu nombre completo', errCorreo:'Ingresa un correo corporativo válido', errBp:'El BP debe contener solo números', greeting:'Hola,', badgesTitle:'Mis Insignias', badgesEmpty:'Completa misiones para desbloquear insignias', badgesBtn:'Ver Insignias', closeBtn:'Cerrar', newBadge:'¡Nueva insignia desbloqueada!', catPerfil:'Perfil', catCalidad:'Calidad', catProgresion:'Progresión', locked:'Bloqueada' },
-  pt: { welcome:'Bem-vindo ao', subtitle:'Insira seus dados para começar', nombre:'Nome completo', correo:'E-mail corporativo', bp:'BP (código numérico)', nombrePh:'Ex: Maria González', correoPh:'Ex: maria.gonzalez@latam.com', bpPh:'Ex: 1234567', btnStart:'Iniciar treinamento ✦', errNombre:'Insira seu nome completo', errCorreo:'Insira um e-mail corporativo válido', errBp:'O BP deve conter apenas números', greeting:'Olá,', badgesTitle:'Minhas Insígnias', badgesEmpty:'Conclua missões para desbloquear insígnias', badgesBtn:'Ver Insígnias', closeBtn:'Fechar', newBadge:'Nova insígnia desbloqueada!', catPerfil:'Perfil', catCalidad:'Qualidade', catProgresion:'Progressão', locked:'Bloqueada' },
+  es: { welcome:'Bienvenido a', subtitle:'Ingresa tus datos para comenzar', nombre:'Nombre completo', correo:'Correo corporativo', bp:'BP (código numérico)', nombrePh:'Ej: María González', correoPh:'Ej: maria.gonzalez@latam.com', bpPh:'Ej: 1234567', btnStart:'Comenzar entrenamiento ✦', errNombre:'Ingresa tu nombre completo', errCorreo:'Ingresa un correo corporativo válido', errBp:'El BP debe contener solo números', greeting:'Hola,', welcomeBack:'Tienes progreso guardado. ¡Continuemos!', continueBtn:'Continuar entrenamiento ✦', newUserBtn:'Empezar de cero', badgesTitle:'Mis Insignias', badgesEmpty:'Completa misiones para desbloquear insignias', badgesBtn:'Ver Insignias', closeBtn:'Cerrar', newBadge:'¡Nueva insignia desbloqueada!', catPerfil:'Perfil', catCalidad:'Calidad', catProgresion:'Progresión', locked:'Bloqueada' },
+  pt: { welcome:'Bem-vindo ao', subtitle:'Insira seus dados para começar', nombre:'Nome completo', correo:'E-mail corporativo', bp:'BP (código numérico)', nombrePh:'Ex: Maria González', correoPh:'Ex: maria.gonzalez@latam.com', bpPh:'Ex: 1234567', btnStart:'Iniciar treinamento ✦', errNombre:'Insira seu nome completo', errCorreo:'Insira um e-mail corporativo válido', errBp:'O BP deve conter apenas números', greeting:'Olá,', welcomeBack:'Você tem progresso salvo. Vamos continuar!', continueBtn:'Continuar treinamento ✦', newUserBtn:'Começar do zero', badgesTitle:'Minhas Insígnias', badgesEmpty:'Conclua missões para desbloquear insígnias', badgesBtn:'Ver Insígnias', closeBtn:'Fechar', newBadge:'Nova insígnia desbloqueada!', catPerfil:'Perfil', catCalidad:'Qualidade', catProgresion:'Progressão', locked:'Bloqueada' },
 };
 
 function initBadgeState(): BadgeState {
   return { earned: new Set(), missionsByProfile: { cabin:0, airport:0, contact:0 }, bestStreak:0, totalXP:0, perfectMissions:0 };
+}
+
+// ── localStorage persistence ──
+const STORAGE_PREFIX = 'protocolo_h_';
+
+interface SavedProgress {
+  participant: { nombre: string; correo: string; bp: string };
+  xp: number;
+  streak: number;
+  badgeState: {
+    earned: string[];
+    missionsByProfile: Record<string, number>;
+    bestStreak: number;
+    totalXP: number;
+    perfectMissions: number;
+  };
+  savedAt: string;
+}
+
+function saveProgress(bp: string, participant: { nombre: string; correo: string; bp: string }, xp: number, streak: number, badgeState: BadgeState) {
+  try {
+    const data: SavedProgress = {
+      participant,
+      xp,
+      streak,
+      badgeState: {
+        earned: Array.from(badgeState.earned),
+        missionsByProfile: badgeState.missionsByProfile,
+        bestStreak: badgeState.bestStreak,
+        totalXP: badgeState.totalXP,
+        perfectMissions: badgeState.perfectMissions,
+      },
+      savedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(STORAGE_PREFIX + bp, JSON.stringify(data));
+  } catch (e) { /* silently fail if storage is full */ }
+}
+
+function loadProgress(bp: string): SavedProgress | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + bp);
+    if (!raw) return null;
+    return JSON.parse(raw) as SavedProgress;
+  } catch { return null; }
 }
 
 function BgLayer() {
@@ -133,6 +177,16 @@ export default function App() {
   const [animateBars, setAnimateBars] = useState(false);
   const [xpDelta, setXpDelta] = useState(0);
   const [badgeState, setBadgeState] = useState<BadgeState>(initBadgeState);
+  const [savedFound, setSavedFound] = useState<SavedProgress|null>(null);
+
+  useEffect(() => {
+    if (screen === 'register' && participant.bp.trim().length >= 3) {
+      const saved = loadProgress(participant.bp.trim());
+      setSavedFound(saved);
+    } else {
+      setSavedFound(null);
+    }
+  }, [participant.bp, screen]);
   const [toastBadges, setToastBadges] = useState<string[]>([]);
   const [showBadgePanel, setShowBadgePanel] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -148,13 +202,28 @@ export default function App() {
   const currentScenario = profile && level ? scenarios[lang][profile][level][scenarioIdx % scenarios[lang][profile][level].length] : null;
   const earnedCount = badgeState.earned.size;
 
-  function validateAndStart() {
+  function validateAndStart(forceNew = false) {
     const errs: Partial<Record<keyof Participant,string>> = {};
     if (!participant.nombre.trim() || participant.nombre.trim().length<3) errs.nombre=rtx.errNombre;
     if (!participant.correo.trim() || !participant.correo.includes('@') || !participant.correo.toLowerCase().includes('latam')) errs.correo=rtx.errCorreo;
     if (!participant.bp.trim() || !/^\d+$/.test(participant.bp.trim())) errs.bp=rtx.errBp;
     setRegErrors(errs);
-    if (Object.keys(errs).length===0) setScreen('profile');
+    if (Object.keys(errs).length===0) // Restore saved progress if returning user
+    if (!forceNew) {
+      const saved = loadProgress(participant.bp.trim());
+      if (saved) {
+        setXp(saved.xp);
+        setStreak(saved.streak);
+        setBadgeState({
+          earned: new Set(saved.badgeState.earned),
+          missionsByProfile: saved.badgeState.missionsByProfile,
+          bestStreak: saved.badgeState.bestStreak,
+          totalXP: saved.badgeState.totalXP,
+          perfectMissions: saved.badgeState.perfectMissions,
+        });
+      }
+    }
+    setScreen('profile');
   }
 
   async function submitResponse() {
@@ -196,6 +265,8 @@ Idioma: ${lang==='es'?'español':'português brasileiro'}. NUNCA uses la palabra
       setFeedback(fb); setXp(newXP); setXpDelta(gained); setStreak(newStreak);
       setBadgeState(nextState);
       if (newBadges.length>0) setToastBadges(newBadges);
+      // Persist progress
+      saveProgress(participant.bp, participant, newXP, newStreak, nextState);
       setScreen('feedback');
     } catch(e) { alert(tx.errorMsg); }
     finally { setLoading(false); }
@@ -268,11 +339,21 @@ Idioma: ${lang==='es'?'español':'português brasileiro'}. NUNCA uses la palabra
               <InputField label={rtx.nombre} placeholder={rtx.nombrePh} value={participant.nombre} onChange={v=>setParticipant(p=>({...p,nombre:v}))} error={regErrors.nombre}/>
               <InputField label={rtx.correo} placeholder={rtx.correoPh} value={participant.correo} onChange={v=>setParticipant(p=>({...p,correo:v}))} type="email" error={regErrors.correo}/>
               <InputField label={rtx.bp} placeholder={rtx.bpPh} value={participant.bp} onChange={v=>setParticipant(p=>({...p,bp:v.replace(/\D/g,'')}))} error={regErrors.bp}/>
-              <button onClick={validateAndStart} style={{width:'100%',padding:15,border:'none',borderRadius:14,background:'linear-gradient(135deg,#7a6030,#c9a84c)',color:'#0a1628',fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,cursor:'pointer',transition:'all 0.25s',marginTop:8}}
-                onMouseEnter={e=>{(e.currentTarget as HTMLButtonElement).style.transform='translateY(-2px)';(e.currentTarget as HTMLButtonElement).style.boxShadow='0 8px 24px rgba(201,168,76,0.3)';}}
-                onMouseLeave={e=>{(e.currentTarget as HTMLButtonElement).style.transform='translateY(0)';(e.currentTarget as HTMLButtonElement).style.boxShadow='none';}}>
-                {rtx.btnStart}
-              </button>
+              {savedFound ? (
+                <>
+                  <div style={{textAlign:'center',marginBottom:14,padding:'12px 16px',background:'rgba(201,168,76,0.08)',border:'1px solid rgba(201,168,76,0.2)',borderRadius:12}}>
+                    <div style={{fontSize:14,fontWeight:600,color:'#c9a84c',marginBottom:4}}>{rtx.welcomeBack}</div>
+                    <div style={{fontSize:12,color:'#8899aa'}}>{savedFound.badgeState.totalXP} XP · {savedFound.badgeState.earned.length} {lang==='es'?'insignias':'insígnias'}</div>
+                  </div>
+                  <button onClick={()=>validateAndStart(false)} style={{width:'100%',padding:15,border:'none',borderRadius:14,background:'linear-gradient(135deg,#7a6030,#c9a84c)',color:'#0a1628',fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,cursor:'pointer',transition:'all 0.25s',marginBottom:10}}
+                    onMouseOver={e=>(e.currentTarget.style.transform='translateY(-1px)')} onMouseOut={e=>(e.currentTarget.style.transform='none')}>{rtx.continueBtn}</button>
+                  <button onClick={()=>validateAndStart(true)} style={{width:'100%',padding:12,border:'1px solid rgba(136,153,170,0.25)',borderRadius:14,background:'transparent',color:'#8899aa',fontFamily:'DM Sans,sans-serif',fontSize:13,fontWeight:500,cursor:'pointer',transition:'all 0.2s'}}
+                    onMouseOver={e=>(e.currentTarget.style.background='rgba(136,153,170,0.06)')} onMouseOut={e=>(e.currentTarget.style.background='transparent')}>{rtx.newUserBtn}</button>
+                </>
+              ) : (
+                <button onClick={()=>validateAndStart(false)} style={{width:'100%',padding:15,border:'none',borderRadius:14,background:'linear-gradient(135deg,#7a6030,#c9a84c)',color:'#0a1628',fontFamily:'Syne,sans-serif',fontSize:15,fontWeight:700,cursor:'pointer',transition:'all 0.25s',marginTop:8}}
+                  onMouseOver={e=>(e.currentTarget.style.transform='translateY(-2px)')} onMouseOut={e=>(e.currentTarget.style.transform='none')}>{rtx.btnStart}</button>
+              )}
             </div>
           </div>
         )}
