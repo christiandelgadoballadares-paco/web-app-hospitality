@@ -268,6 +268,33 @@ Idioma: ${lang==='es'?'español':'português brasileiro'}. NUNCA uses la palabra
       // Persist progress
       saveProgress(participant.bp, participant, newXP, newStreak, nextState);
       setScreen('feedback');
+
+    // Log to Google Sheets (fire and forget)
+    const avg2 = Math.round((fb.scores.anticipacion + fb.scores.autenticidad + fb.scores.sorpresa) / 3);
+    fetch('/api/log-response', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        timestamp: new Date().toISOString(),
+        nombre: participant.nombre,
+        correo: participant.correo,
+        bp: participant.bp,
+        perfil: profile,
+        nivel: level,
+        escenario: currentScenario.situation,
+        respuesta: response,
+        scoreAnticipacion: fb.scores.anticipacion,
+        scoreAutenticidad: fb.scores.autenticidad,
+        scoreSorpresa: fb.scores.sorpresa,
+        promedio: avg2,
+        commentAnticipacion: fb.comments.anticipacion,
+        commentAutenticidad: fb.comments.autenticidad,
+        commentSorpresa: fb.comments.sorpresa,
+        mejora: fb.mejora || '',
+        xpGanado: gained,
+        streak: newStreak,
+      })
+    }).catch(() => { /* silent fail */ });
     } catch(e) { alert(tx.errorMsg); }
     finally { setLoading(false); }
   }
